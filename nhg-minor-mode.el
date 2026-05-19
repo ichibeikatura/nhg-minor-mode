@@ -115,6 +115,9 @@
    ;; 7. 一般キーワード (define etc)
    `(,(regexp-opt '("define" "include" "postProcess" "filepath") 'words)
      0 font-lock-keyword-face)
+
+   ;; 8. タグ (:tag1:tag2:...:) -> Operator 02 (Purple)
+   '(":[^:\n0-9][^:\n]*\\(:[^:\n0-9][^:\n]*\\)*:" 0 'nhg-operator-face-02)
    ))
 
 ;; -------------------------------------------------------------------------
