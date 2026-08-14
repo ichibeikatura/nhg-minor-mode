@@ -1,3 +1,5 @@
+;;; nhg-minor-mode.el --- 日本語の文章を書くためのハイライト  -*- lexical-binding: t; -*-
+
 (require 'font-lock)
 
 ;; -------------------------------------------------------------------------
@@ -135,8 +137,7 @@
         (setq-local indent-tabs-mode nil))
     (font-lock-remove-keywords nil nhg-font-lock-keywords))
   
-  (if (fboundp 'font-lock-flush)
-      (font-lock-flush)
-    (font-lock-fontify-buffer)))
+  ;; font-lock-flush は Emacs 25.1 以降で常に存在する。
+  (font-lock-flush))
 
 (provide 'nhg-minor-mode)
