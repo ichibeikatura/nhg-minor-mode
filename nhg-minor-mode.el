@@ -1,5 +1,31 @@
 ;;; nhg-minor-mode.el --- 日本語の文章を書くためのハイライト  -*- lexical-binding: t; -*-
 
+;; Copyright (C) 2025 taihei yamashita
+
+;; Author: taihei yamashita
+;; URL: https://github.com/ichibeikatura/nhg-minor-mode
+;; Version: 0.1.0
+;; Package-Requires: ((emacs "25.1"))
+;; Keywords: wp, convenience, i18n
+;; SPDX-License-Identifier: MIT
+
+;; This file is not part of GNU Emacs.
+
+;;; Commentary:
+
+;; 日本語の文章を書くとき、語尾の重複・受け身の多用・指示語の多用を
+;; 「色」で警告するマイナーモード。自動修正や提案はせず、着色だけを行う。
+;; 色が付く語尾と付かない語尾のリズムから、なめらかな文章へ導くことを狙う。
+;;
+;; 使い方:
+;;
+;;     (add-hook 'text-mode-hook #'nhg-minor-mode)
+;;     (add-hook 'markdown-mode-hook #'nhg-minor-mode)
+;;
+;; 参考論文: http://ci.nii.ac.jp/naid/110003743558
+
+;;; Code:
+
 (require 'font-lock)
 
 ;; -------------------------------------------------------------------------
@@ -65,21 +91,35 @@
      "もの")
    t))
 
+;; 文末とみなす区切り。句点だけでなく感嘆符・疑問符 (全角/半角)、
+;; および行末 ($) も拾う。「です！」「ない？」「〜だ」で終わる行が対象になる。
+(defconst nhg-regex-sentence-end "\\(?:[。！？!?]\\|$\\)")
+
 (defconst nhg-regex-endings
-  (regexp-opt
-   '("ます。" "です。" "なる。" "なのだ。" "ない。" "いる。" "だ。")
-   t))
+  (concat (regexp-opt
+           '("ます" "です" "なる" "なのだ" "ない" "いる" "だ"))
+          nhg-regex-sentence-end))
+
+;; 受け身の語尾。文末区切りを共有する。
+(defconst nhg-regex-passive
+  (concat (regexp-opt '("れる" "れた"))
+          nhg-regex-sentence-end))
 
 (defconst nhg-regex-conjunction-strong
   (regexp-opt
-   '("れる。" "れた。" "例えば" "しかし" "けれど" "だから" "なるほど"
+   '("例えば" "しかし" "けれど" "だから" "なるほど"
      "ところが" "だが" "もっとも" "ともあれ" "けど" "時に" "ただし"
      "こと" "でもない" "が、" "で、" )
    t))
 
+;; 断定の語尾。文末区切りを共有する。
+(defconst nhg-regex-weak-endings
+  (concat (regexp-opt '("である"))
+          nhg-regex-sentence-end))
+
 (defconst nhg-regex-conjunction-weak
   (regexp-opt
-   '("である。" "っぽい" "それで" "感じ" "的"
+   '("っぽい" "それで" "感じ" "的"
      "というか" "もちろん" "そんなわけで" "思う" "なって")
    t))
 
@@ -95,13 +135,15 @@
    ;; 3. 語尾 (ます/です) -> Operator 02 (Purple)
    `(,nhg-regex-endings 0 'nhg-operator-face-02)
 
-   ;; 4. 接続詞・型1 (しかし/例えば) -> Type 01 (Sienna)
+   ;; 4. 接続詞・型1 (しかし/例えば) と受け身 (れる/れた) -> Type 01 (Sienna)
    `(,nhg-regex-conjunction-strong 0 'nhg-type-face-01)
+   `(,nhg-regex-passive 0 'nhg-type-face-01)
    '("『[^』]*』" 0 'nhg-type-face-01)
    '("気\\(?:の\\|が\\|も\\)" 0 'nhg-type-face-01)
 
    ;; 5. 接続詞・型2 (である/っぽい) -> Type 02 (Khaki)
    `(,nhg-regex-conjunction-weak 0 'nhg-type-face-02)
+   `(,nhg-regex-weak-endings 0 'nhg-type-face-02)
 
    ;; 6. 警告・強調 -> Operator 01 (Blue)
    ;; 長いひらがな (24文字以上)
@@ -127,17 +169,42 @@
 ;; 3. Mode Definition
 ;; -------------------------------------------------------------------------
 
+;; 有効化時に書き換える変数の退避先。
+;; (ローカル値があったか . その時点の値) を保持し、無効化時に元へ戻す。
+(defvar-local nhg--saved-locals nil
+  "有効化前の設定を (変数 . (ローカル値の有無 . 値)) のリストで保持する。")
+
+(defun nhg--save-local (sym)
+  "SYM のバッファローカル値の有無と現在値を記録する。"
+  (cons (local-variable-p sym) (symbol-value sym)))
+
+(defun nhg--restore-local (sym saved)
+  "SYM を `nhg--save-local' が返した SAVED の状態へ戻す。"
+  (if (car saved)
+      (set (make-local-variable sym) (cdr saved))
+    (kill-local-variable sym)))
+
 (define-minor-mode nhg-minor-mode
   "Minor mode for nhg styling."
   :lighter " nhg"
   (if nhg-minor-mode
       (progn
         (font-lock-add-keywords nil nhg-font-lock-keywords 'append)
+        ;; 元の設定を退避してから書き換える。
+        (setq nhg--saved-locals
+              (list (cons 'tab-width (nhg--save-local 'tab-width))
+                    (cons 'indent-tabs-mode (nhg--save-local 'indent-tabs-mode))))
         (setq-local tab-width 2)
         (setq-local indent-tabs-mode nil))
-    (font-lock-remove-keywords nil nhg-font-lock-keywords))
-  
+    (font-lock-remove-keywords nil nhg-font-lock-keywords)
+    ;; 有効化時に書き換えた設定を元へ戻す。
+    (dolist (entry nhg--saved-locals)
+      (nhg--restore-local (car entry) (cdr entry)))
+    (kill-local-variable 'nhg--saved-locals))
+
   ;; font-lock-flush は Emacs 25.1 以降で常に存在する。
   (font-lock-flush))
 
 (provide 'nhg-minor-mode)
+
+;;; nhg-minor-mode.el ends here
